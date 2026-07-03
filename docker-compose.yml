@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - jobqueue-data:/data
+    environment:
+      JOBQUEUE_WORKERS: "6"
+      JOBQUEUE_BACKOFF_BASE: "2.0"
+      JOBQUEUE_BACKOFF_CAP: "30.0"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "4173:4173"
+    depends_on:
+      - backend
+    # In production you'd point the frontend at the backend via a reverse proxy;
+    # for the demo, run `npm run dev` (Vite proxy) instead — see the README.
+
+volumes:
+  jobqueue-data:
