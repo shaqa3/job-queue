@@ -5,6 +5,7 @@ built with **Python (FastAPI)** and **React (Vite + TypeScript)**. Self-containe
 the queue is backed by SQLite and an in-process worker pool, so it runs with just
 `python` and `npm` — no Redis or external broker required.
 
+[![CI](https://github.com/shaqa3/job-queue/actions/workflows/ci.yml/badge.svg)](https://github.com/shaqa3/job-queue/actions/workflows/ci.yml)
 ![stack](https://img.shields.io/badge/backend-FastAPI-009688) ![stack](https://img.shields.io/badge/frontend-React%2019-61dafb) ![stack](https://img.shields.io/badge/storage-SQLite-003b57)
 
 ![Job Queue monitoring dashboard — live status counts, throughput chart, per-queue concurrency, and a filterable jobs table, streaming over a WebSocket feed](assets/dashboard.png)
