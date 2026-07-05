@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt httpx
+
+      - name: Boot app and smoke-test the queue
+        run: |
+          python - <<'PY'
+          import time
+          from app.main import app
+          from fastapi.testclient import TestClient
+
+          # TestClient runs the lifespan, which starts the worker pool and the
+          # WebSocket broadcaster, then drains them cleanly on exit.
+          with TestClient(app) as c:
+              assert c.get("/api/health").status_code == 200
+              assert c.get("/openapi.json").status_code == 200
+
+              tasks = c.get("/api/tasks").json()["tasks"]
+              for t in ("echo", "flaky", "always_fail"):
+                  assert t in tasks, tasks
+
+              stats = c.get("/api/stats").json()
+              assert "counts" in stats and "series" in stats, stats
+
+              # Enqueue a job and let a worker process it to completion.
+              r = c.post("/api/jobs", json={"task": "echo", "payload": {"hi": 1}})
+              assert r.status_code == 201, r.text
+              job_id = r.json()["id"]
+
+              deadline = time.time() + 10
+              status = None
+              while time.time() < deadline:
+                  status = c.get(f"/api/jobs/{job_id}").json()["status"]
+                  if status == "completed":
+                      break
+                  time.sleep(0.2)
+              assert status == "completed", f"job did not complete (status={status})"
+
+              # Idempotency: a repeat enqueue with the same key is deduplicated.
+              a = c.post("/api/jobs", json={"task": "echo", "idempotency_key": "k1"}).json()
+              b = c.post("/api/jobs", json={"task": "echo", "idempotency_key": "k1"}).json()
+              assert a["id"] == b["id"] and b.get("deduplicated"), (a, b)
+
+              # Unknown task is rejected.
+              assert c.post("/api/jobs", json={"task": "nope"}).status_code == 400
+
+              # WebSocket live feed pushes a snapshot on connect.
+              with c.websocket_connect("/api/ws") as ws:
+                  frame = ws.receive_json()
+                  assert frame["type"] == "snapshot", frame
+                  assert "stats" in frame and "jobs" in frame, frame
+
+          print("backend smoke test OK")
+          PY
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t job-queue-backend ./backend
+
+      - name: Build frontend image
+        run: docker build -t job-queue-frontend ./frontend
